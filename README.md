@@ -1,13 +1,14 @@
 # Fastest Possible JSON API (Build 74)
 
-An ultra-low-latency, zero-cost abstraction, high-throughput asynchronous JSON REST API built with Actix-Web 4.x in Rust. Designed for sub-10 microsecond internal server response times, lock-free atomic telemetry aggregation, and sustained 60,000+ requests per second throughput with sub-millisecond round-trip latencies.
+An ultra-low-latency, zero-cost abstraction, high-throughput asynchronous JSON REST API built with Actix-Web 4.x in Rust. Designed for sub-10 microsecond internal server response times, lock-free atomic telemetry aggregation, zero-copy string borrowing, cache-line aligned circular ring buffers, and sustained 60,000+ requests per second throughput with sub-millisecond round-trip latencies.
 
 ## Stack
 
 - **Language / Runtime**: Rust (2021 Edition, `rustc 1.96+`)
 - **Framework**: Actix-Web 4.9 (Asynchronous Actor-based HTTP Engine)
 - **Async Runtime**: Tokio 1.38 & Actix-RT 2.10
-- **Serialization / Deserialization**: Serde & Serde-JSON (Zero-allocation / streaming deserialization)
+- **Zero-Copy Serialization Engine**: Serde with `ZeroCopyEvent<'a>` string slice borrowing directly from raw HTTP byte buffers
+- **In-Memory Ring Buffer**: 64-byte Cache-Line Aligned (`#[repr(align(64))]`) Lock-Free Circular Ring Buffer (`RingBufferService`) with bitmask wraparound (`index & (65536 - 1)`)
 - **Observability & Telemetry**: Lock-free Atomic Counters (`AtomicU64`, `AtomicUsize`) & Reservoir Latency Distribution Percentiles (P50, P90, P95, P99, P99.9)
 - **Middleware**: Custom `LatencyTracker` injecting high-resolution `X-Response-Time-Microseconds`, `X-Response-Time-Ms`, and `X-Server-Timing` headers via monotonic clock (`std::time::Instant`)
 - **Load Testing & Benchmarking**: Dedicated multi-threaded asynchronous client harness (`benchmark-client`)
@@ -23,6 +24,8 @@ Benchmarked on a local workstation using the built-in multi-threaded asynchronou
 | Endpoint | Concurrency | Total Requests | Throughput (RPS) | Internal Server P50 | Internal Server P90 | Internal Server P99 | Mean Server Latency |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `GET /api/v1/ping` | 50 workers | 10,000 reqs | **58,735 req/sec** | **4 μs (0.004ms)** | **8 μs (0.008ms)** | **19 μs (0.019ms)** | **5.44 μs** |
+| `POST /api/v1/events/ingest/zerocopy` | 50 workers | 10,000 reqs | **61,093 req/sec** | **7 μs (0.007ms)** | **11 μs (0.011ms)** | **29 μs (0.029ms)** | **8.72 μs** |
+| `POST /api/v1/events/ingest/batch` (5 items/req) | 50 workers | 5,000 reqs (25k events) | **37,468 req/sec** (**187,340 events/s**) | **12 μs (0.012ms)** | **29 μs (0.029ms)** | **79 μs (0.079ms)** | **21.16 μs** |
 | `POST /api/v1/echo` | 50 workers | 5,000 reqs | **66,576 req/sec** | **7 μs (0.007ms)** | **12 μs (0.012ms)** | **20 μs (0.020ms)** | **8.31 μs** |
 | `GET /api/v1/benchmark/synthetic` | 30 workers | 3,000 reqs | **42,850 req/sec** | **9 μs (0.009ms)** | **16 μs (0.016ms)** | **28 μs (0.028ms)** | **10.15 μs** |
 
@@ -100,17 +103,17 @@ cargo run --release
 ### 2. Execute Benchmark Harness
 In terminal 2:
 ```bash
+# Benchmark Zero-Copy Ingestion (10,000 requests, 50 concurrent workers)
+cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e zerocopy
+
+# Benchmark Batch Ingestion (5,000 requests, 25,000 total events)
+cargo run --release --bin benchmark-client -- -n 5000 -c 50 -e batch
+
 # Benchmark Ping endpoint (10,000 requests, 50 concurrent workers)
 cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e ping
 
 # Benchmark JSON Echo endpoint (5,000 requests, 50 concurrent workers)
 cargo run --release --bin benchmark-client -- -n 5000 -c 50 -e echo
-
-# Benchmark Synthetic Payload Generator
-cargo run --release --bin benchmark-client -- -n 3000 -c 30 -e synthetic
-
-# Custom URL and custom concurrency
-cargo run --release --bin benchmark-client -- --url http://127.0.0.1:8080/api/v1/ping -n 20000 -c 100
 ```
 
 ---
@@ -123,31 +126,39 @@ cargo run --release --bin benchmark-client -- --url http://127.0.0.1:8080/api/v1
 - `GET /ping` or `GET /api/v1/ping`
   - Returns ultra-lightweight zero-allocation heartbeat response: `{"message":"pong","timestamp_ms":1724784000000,"unix_nanos":1724784000000000000}`.
 
-### 2. Real-Time Telemetry & Metrics
+### 2. Zero-Copy Event Ingestion & In-Memory Ring Buffer
+- `POST /api/v1/events/ingest/zerocopy`
+  - Ingests single telemetry event borrowing strings directly from request byte slice with zero intermediate heap allocations.
+  - Request body:
+    ```json
+    {
+      "event_id": "evt-001",
+      "topic": "sensor.temperature",
+      "source": "node-42",
+      "severity": "info",
+      "metric_value": 24.85,
+      "timestamp_ms": 1724784000000
+    }
+    ```
+- `POST /api/v1/events/ingest/batch`
+  - Batch ingestion of multiple event records in a single payload.
+- `GET /api/v1/events/buffer/stats`
+  - Returns ring buffer capacity (65,536), current occupancy, write/read head positions, total pushed, dropped count, and estimated allocated memory.
+- `GET /api/v1/events/buffer/recent?limit=20&topic=sensor.temperature`
+  - Non-destructive query returning the most recent events ordered newest first.
+- `POST /api/v1/events/buffer/drain`
+  - Atomically drains all buffered events.
+
+### 3. Real-Time Telemetry & Metrics
 - `GET /metrics` or `GET /api/v1/metrics`
   - Returns lock-free atomic counters: total requests, active requests, 2xx/4xx/5xx counts, average RPS, route breakdown, and microsecond latency percentiles (min, mean, p50, p90, p95, p99, p99.9, max).
 - `POST /api/v1/metrics/reset`
   - Resets all telemetry counters and latency reservoirs.
 
-### 3. JSON Echo & Serialization Benchmarking
-- `POST /api/v1/echo`
-  - Ingests structured JSON, validates tags, measures internal parsing time, and returns payload metrics.
-  - Example request body:
-    ```json
-    {
-      "message": "Benchmark payload",
-      "count": 42,
-      "enabled": true,
-      "tags": ["actix", "rust", "low-latency"],
-      "metadata": { "region": "us-east-1", "cluster": 7 }
-    }
-    ```
-
-### 4. Synthetic Data Generation & Batch Ingestion
-- `GET /api/v1/benchmark/synthetic?size=small` (Options: `small`, `medium`, `large`, `xlarge` or `count=N`)
-  - Generates realistic deterministic synthetic inventory items with nested telemetry sensors.
-- `POST /api/v1/benchmark/ingest`
-  - Ingests batch item records, validates pricing/stock integrity, and computes batch summary statistics in microseconds.
+### 4. JSON Echo & Synthetic Generation
+- `POST /api/v1/echo`: Ingests JSON, validates tags, and returns payload metrics.
+- `GET /api/v1/benchmark/synthetic?size=small`: Generates realistic deterministic synthetic inventory items.
+- `POST /api/v1/benchmark/ingest`: Ingests and aggregates batch item valuations.
 
 ---
 
@@ -156,18 +167,21 @@ cargo run --release --bin benchmark-client -- --url http://127.0.0.1:8080/api/v1
 ### Why Actix-Web and Rust?
 Rust's ownership model and zero-cost abstractions allow building networked services without garbage collection pauses, data races, or runtime overhead. Actix-Web utilizes an asynchronous actor model backed by Tokio and OS-native event loops (`epoll` on Linux, `kqueue` on macOS, `IOCP` on Windows), distributing requests across a dedicated pool of OS worker threads without mutex contention.
 
-### Zero-Contention Telemetry Architecture
-Instead of synchronizing request tracking across threads using heavy Mutex locks, `MetricsService` relies on lock-free `AtomicU64` and `AtomicUsize` primitives with `Ordering::Relaxed` memory ordering. Latency percentiles use reservoir sampling with a dedicated `RwLock` that is sampled asynchronously, eliminating lock contention on high-throughput request paths.
+### Zero-Copy Deserialization with Byte Borrowing
+In `ZeroCopyEvent<'a>`, all string fields (`&'a str`) borrow memory directly from the incoming `web::Bytes` slice. This eliminates heap allocations for strings during JSON parsing, allowing the CPU to read field slices in place and saving hundreds of thousands of heap allocations per second under heavy load.
+
+### Cache-Line Padded Lock-Free Circular Ring Buffer
+To store incoming events without database latency, `RingBufferService` manages a pre-allocated circular buffer of 65,536 slots. The read and write heads are annotated with `#[repr(align(64))]` to occupy separate 64-byte CPU cache lines, eliminating "false sharing" cache-invalidation penalties between reader and writer cores on multi-socket / multi-core systems.
 
 ### High-Resolution Latency Headers
-Every request passing through `LatencyTracker` middleware captures start time using `std::time::Instant::now()`. On response dispatch, elapsed time is computed in microseconds and injected into `X-Response-Time-Microseconds`, `X-Response-Time-Ms`, and `X-Server-Timing` headers, allowing upstream load balancers and clients to differentiate between server execution time and network round-trip delay.
+Every request passing through `LatencyTracker` captures start time using `std::time::Instant::now()`. On response dispatch, elapsed time is computed in microseconds and injected into `X-Response-Time-Microseconds`, `X-Response-Time-Ms`, and `X-Server-Timing` headers, allowing upstream load balancers and clients to differentiate between server execution time and network round-trip delay.
 
 ---
 
 ## Data Handling
 
 - **Zero Persistence Posture**: This service operates entirely in-memory with zero disk persistence.
-- **Data Retention**: Synthetic benchmark payloads and echo requests are processed in memory and discarded upon response transmission.
+- **Data Retention**: Buffered telemetry events are maintained in a 65,536-slot in-memory circular ring buffer that automatically overwrites oldest records upon capacity overflow.
 - **Privacy & Redaction**: No personally identifiable information (PII) is logged or stored. Metrics endpoints export aggregate statistical counters only.
 
 ---

@@ -5,6 +5,7 @@
 
 pub mod benchmark;
 pub mod echo;
+pub mod events;
 pub mod health;
 pub mod metrics;
 pub mod ping;
@@ -13,6 +14,10 @@ use actix_web::web;
 
 use crate::handlers::benchmark::{get_synthetic_data, post_ingest_data};
 use crate::handlers::echo::post_echo;
+use crate::handlers::events::{
+    get_buffer_stats, get_recent_events, post_drain_buffer, post_ingest_batch,
+    post_ingest_zerocopy,
+};
 use crate::handlers::health::get_health;
 use crate::handlers::metrics::{get_metrics, reset_metrics};
 use crate::handlers::ping::get_ping;
@@ -36,6 +41,12 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/metrics/reset", web::post().to(reset_metrics))
             .route("/echo", web::post().to(post_echo))
             .route("/benchmark/synthetic", web::get().to(get_synthetic_data))
-            .route("/benchmark/ingest", web::post().to(post_ingest_data)),
+            .route("/benchmark/ingest", web::post().to(post_ingest_data))
+            // Event Ingestion & Ring Buffer Endpoints
+            .route("/events/ingest/zerocopy", web::post().to(post_ingest_zerocopy))
+            .route("/events/ingest/batch", web::post().to(post_ingest_batch))
+            .route("/events/buffer/stats", web::get().to(get_buffer_stats))
+            .route("/events/buffer/recent", web::get().to(get_recent_events))
+            .route("/events/buffer/drain", web::post().to(post_drain_buffer)),
     );
 }

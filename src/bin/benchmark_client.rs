@@ -70,6 +70,8 @@ async fn main() {
                         "metrics" => config.target_url = "http://127.0.0.1:8080/api/v1/metrics".to_string(),
                         "synthetic" => config.target_url = "http://127.0.0.1:8080/api/v1/benchmark/synthetic?size=small".to_string(),
                         "echo" => config.target_url = "http://127.0.0.1:8080/api/v1/echo".to_string(),
+                        "zerocopy" => config.target_url = "http://127.0.0.1:8080/api/v1/events/ingest/zerocopy".to_string(),
+                        "batch" => config.target_url = "http://127.0.0.1:8080/api/v1/events/ingest/batch".to_string(),
                         _ => {}
                     }
                     i += 1;
@@ -83,7 +85,7 @@ async fn main() {
                 println!("  -u, --url <URL>            Target URL (default: http://127.0.0.1:8080/api/v1/ping)");
                 println!("  -n, --requests <COUNT>     Total number of requests to send (default: 5000)");
                 println!("  -c, --concurrency <COUNT>  Concurrent worker tasks (default: 50)");
-                println!("  -e, --endpoint <TYPE>      Preset endpoint: 'ping', 'health', 'metrics', 'synthetic', 'echo'");
+                println!("  -e, --endpoint <TYPE>      Preset: 'ping', 'health', 'metrics', 'synthetic', 'echo', 'zerocopy', 'batch'");
                 println!("  -h, --help                 Display this help message");
                 return;
             }
@@ -121,24 +123,56 @@ async fn main() {
         let tx_clone = tx.clone();
         let client = Arc::clone(&client_arc);
         let url = config.target_url.clone();
-        let is_echo = config.endpoint_type == "echo";
+        let endpoint_type = config.endpoint_type.clone();
 
         let handle = tokio::spawn(async move {
-            for _ in 0..count {
+            for i in 0..count {
                 let req_start = Instant::now();
 
-                let res_result = if is_echo {
-                    client
-                        .post(&url)
-                        .json(&serde_json::json!({
-                            "message": "benchmark payload",
-                            "tags": ["actix", "rust", "bench"],
-                            "count": 42
-                        }))
-                        .send()
-                        .await
-                } else {
-                    client.get(&url).send().await
+                let res_result = match endpoint_type.as_str() {
+                    "echo" => {
+                        client
+                            .post(&url)
+                            .json(&serde_json::json!({
+                                "message": "benchmark payload",
+                                "tags": ["actix", "rust", "bench"],
+                                "count": 42
+                            }))
+                            .send()
+                            .await
+                    }
+                    "zerocopy" => {
+                        client
+                            .post(&url)
+                            .json(&serde_json::json!({
+                                "event_id": format!("evt-w{}-{}", worker_id, i),
+                                "topic": "sensor.temperature",
+                                "source": "node-042",
+                                "severity": "info",
+                                "metric_value": 24.85,
+                                "timestamp_ms": 1724784000000u64
+                            }))
+                            .send()
+                            .await
+                    }
+                    "batch" => {
+                        client
+                            .post(&url)
+                            .json(&serde_json::json!({
+                                "batch_id": format!("b-{}-{}", worker_id, i),
+                                "client_id": "load-tester",
+                                "events": [
+                                    {"event_id": "e1", "topic": "cpu", "source": "srv1", "severity": "info", "metric_value": 85.2, "timestamp_ms": 1724784000000u64},
+                                    {"event_id": "e2", "topic": "mem", "source": "srv1", "severity": "warn", "metric_value": 91.0, "timestamp_ms": 1724784000000u64},
+                                    {"event_id": "e3", "topic": "net", "source": "srv1", "severity": "info", "metric_value": 440.5, "timestamp_ms": 1724784000000u64},
+                                    {"event_id": "e4", "topic": "dsk", "source": "srv1", "severity": "info", "metric_value": 62.1, "timestamp_ms": 1724784000000u64},
+                                    {"event_id": "e5", "topic": "pwr", "source": "srv1", "severity": "info", "metric_value": 12.4, "timestamp_ms": 1724784000000u64}
+                                ]
+                            }))
+                            .send()
+                            .await
+                    }
+                    _ => client.get(&url).send().await,
                 };
 
                 let client_elapsed_us = req_start.elapsed().as_micros() as u64;
@@ -182,7 +216,7 @@ async fn main() {
         handles.push(handle);
     }
 
-    drop(tx); // Close the original sender so receiver drains properly
+    drop(tx); // Close original sender
 
     let mut results = Vec::with_capacity(config.total_requests);
     while let Some(res) = rx.recv().await {

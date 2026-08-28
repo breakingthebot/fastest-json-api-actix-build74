@@ -19,7 +19,7 @@ pub mod services;
 use crate::config::AppConfig;
 use crate::middleware::LatencyTracker;
 use crate::models::ApiErrorResponse;
-use crate::services::MetricsService;
+use crate::services::{MetricsService, RingBufferService};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -45,10 +45,12 @@ async fn main() -> std::io::Result<()> {
 
     let start_time = Instant::now();
     let metrics_service = Arc::new(MetricsService::new());
+    let ring_buffer_service = Arc::new(RingBufferService::new());
 
     let server_start_time = web::Data::new(start_time);
     let server_config = web::Data::new(config.clone());
     let shared_metrics = web::Data::new(metrics_service);
+    let shared_ring_buffer = web::Data::new(ring_buffer_service);
 
     HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -85,6 +87,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(server_start_time.clone())
             .app_data(server_config.clone())
             .app_data(shared_metrics.clone())
+            .app_data(shared_ring_buffer.clone())
             .configure(handlers::configure_routes)
     })
     .workers(config.workers)
