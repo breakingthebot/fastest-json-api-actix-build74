@@ -19,7 +19,9 @@ pub mod services;
 use crate::config::AppConfig;
 use crate::middleware::{LatencyTracker, TracingMiddleware};
 use crate::models::ApiErrorResponse;
-use crate::services::{MetricsService, RingBufferService, ShardedCacheService};
+use crate::services::{
+    MetricsService, RingBufferService, ShardedCacheService, WebSocketBroadcaster,
+};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -41,6 +43,8 @@ async fn main() -> std::io::Result<()> {
     log::info!("   Keep-Alive     : {}s", config.keep_alive_secs);
     log::info!("   Max JSON Size  : {} bytes", max_payload_bytes);
     log::info!("   Cache Shards   : 64 Partitioned Lock-Free Shards");
+    log::info!("   WebSocket      : Real-Time Telemetry Stream at /ws/metrics");
+    log::info!("   Live Dashboard : Visual Monitoring UI at /dashboard");
     log::info!("   Tracing        : W3C Trace Context Propagation Enabled");
     log::info!("   Observability  : OpenMetrics / Prometheus 0.0.4 at /metrics");
     log::info!("   Environment    : {}", config.environment);
@@ -50,12 +54,18 @@ async fn main() -> std::io::Result<()> {
     let metrics_service = Arc::new(MetricsService::new());
     let ring_buffer_service = Arc::new(RingBufferService::new());
     let cache_service = Arc::new(ShardedCacheService::new());
+    let websocket_broadcaster = WebSocketBroadcaster::new(
+        Arc::clone(&metrics_service),
+        Arc::clone(&ring_buffer_service),
+        Arc::clone(&cache_service),
+    );
 
     let server_start_time = web::Data::new(start_time);
     let server_config = web::Data::new(config.clone());
     let shared_metrics = web::Data::new(metrics_service);
     let shared_ring_buffer = web::Data::new(ring_buffer_service);
     let shared_cache = web::Data::new(cache_service);
+    let shared_broadcaster = web::Data::new(websocket_broadcaster);
 
     HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -95,6 +105,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(shared_metrics.clone())
             .app_data(shared_ring_buffer.clone())
             .app_data(shared_cache.clone())
+            .app_data(shared_broadcaster.clone())
             .configure(handlers::configure_routes)
     })
     .workers(config.workers)

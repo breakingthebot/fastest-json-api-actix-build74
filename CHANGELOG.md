@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-28
+
+### Added
+- **WebSocket Real-Time Telemetry Streaming Pipeline**:
+  - `WebSocketBroadcaster` service streaming continuous 100ms telemetry frames (`LiveTelemetryFrame`) over Tokio broadcast channels to connected WebSocket clients.
+  - Calculation of instantaneous delta requests per second (`current_rps`), active concurrency, P50/P90/P99 latency metrics, ring buffer capacity, and sharded cache hit ratios.
+  - Bidirectional WebSocket communication on `GET /ws/metrics` and `GET /api/v1/stream/metrics` supporting client commands (`ping`, `get_snapshot`, `reset_metrics`, `drain_buffer`).
+- **Embedded Real-Time Monitoring Dashboard**:
+  - `GET /dashboard` and `GET /api/v1/stream/dashboard` serving a self-contained zero-dependency web monitoring UI with live RPS counters, latency cards, buffer occupancy meters, interactive control triggers, and live streaming event logs.
+- **Integration Tests**:
+  - `tests/websocket_tests.rs` verifying dashboard HTML rendering, frame compilation, and WebSocket handler logic.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added
@@ -16,8 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automated 128-bit trace ID and 64-bit span ID generation with context propagation to request extensions and response headers.
   - `GET /api/v1/trace/current` debug inspection endpoint returning active trace context and span hierarchy.
 - **Comprehensive Integration Tests**:
-  - `tests/prometheus_tests.rs` verifying HELP/TYPE declarations, quantiles, and content-type headers.
-  - `tests/tracing_tests.rs` verifying trace ID generation, parent span propagation, and `tracestate` pass-through.
+  - `tests/prometheus_tests.rs` and `tests/tracing_tests.rs`.
 
 ## [0.3.0] - 2026-08-28
 
@@ -39,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `POST /api/v1/events/ingest/zerocopy` endpoint achieving **61,093 req/sec** throughput with **7 μs** P50 server processing time.
 - **Cache-Line Aligned Circular Ring Buffer**:
   - `RingBufferService` managing a pre-allocated 65,536-element contiguous memory buffer with power-of-two bitmask indexing (`index & MASK`).
-  - Cache-line padding (`#[repr(align(64))]`) on atomic head and tail pointers to prevent CPU false sharing.
+  - Cache-line padding (`#[repr(align(64))]`) on atomic head and tail pointers.
 - **Batch Event Ingestion & Buffer Inspection**:
   - `POST /api/v1/events/ingest/batch` endpoint sustaining **37,468 req/sec** (**187,340 events/sec**).
   - `GET /api/v1/events/buffer/stats`, `GET /api/v1/events/buffer/recent`, `POST /api/v1/events/buffer/drain`.

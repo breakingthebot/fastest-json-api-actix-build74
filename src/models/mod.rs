@@ -12,6 +12,7 @@ pub mod health;
 pub mod metrics;
 pub mod ping;
 pub mod tracing;
+pub mod websocket;
 
 pub use benchmark::{BenchmarkItem, BenchmarkResponse, IngestRequest, IngestResponse, ItemTelemetry};
 pub use cache::{
@@ -28,3 +29,4 @@ pub use health::{HealthResponse, SystemMetadata};
 pub use metrics::{EndpointMetrics, LatencyDistribution, MetricsSnapshot};
 pub use ping::PingResponse;
 pub use tracing::{TraceContext, TraceInspectionResponse};
+pub use websocket::{LiveTelemetryFrame, WsClientCommand, WsCommandResponse};

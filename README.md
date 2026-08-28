@@ -1,12 +1,13 @@
 # Fastest Possible JSON API (Build 74)
 
-An ultra-low-latency, zero-cost abstraction, high-throughput asynchronous JSON REST API built with Actix-Web 4.x in Rust. Designed for sub-10 microsecond internal server response times, lock-free atomic telemetry aggregation, zero-copy string borrowing, cache-line aligned circular ring buffers, 64-way partitioned in-memory caching with sub-microsecond TTL evaluation, Prometheus / OpenMetrics 0.0.4 exposition, W3C distributed tracing header propagation, and sustained 70,000+ requests per second throughput with sub-millisecond round-trip latencies.
+An ultra-low-latency, zero-cost abstraction, high-throughput asynchronous JSON REST API built with Actix-Web 4.x in Rust. Designed for sub-10 microsecond internal server response times, lock-free atomic telemetry aggregation, zero-copy string borrowing, cache-line aligned circular ring buffers, 64-way partitioned in-memory caching with sub-microsecond TTL evaluation, Prometheus / OpenMetrics 0.0.4 exposition, W3C distributed tracing header propagation, real-time WebSocket telemetry streaming (100ms interval), and sustained 70,000+ requests per second throughput with sub-millisecond round-trip latencies.
 
 ## Stack
 
 - **Language / Runtime**: Rust (2021 Edition, `rustc 1.96+`)
-- **Framework**: Actix-Web 4.9 (Asynchronous Actor-based HTTP Engine)
+- **Framework**: Actix-Web 4.9 & Actix-WS 0.3 (Asynchronous Non-Blocking HTTP & WebSocket Engine)
 - **Async Runtime**: Tokio 1.38 & Actix-RT 2.10
+- **Real-Time Streaming**: `WebSocketBroadcaster` streaming 100ms telemetry frames (`/ws/metrics`, `/api/v1/stream/metrics`) to WebSocket subscribers with zero-dependency embedded monitoring dashboard (`/dashboard`)
 - **Observability & OpenMetrics**: Standard Prometheus text exposition (version 0.0.4) exporting request counters, in-flight gauges, quantile summaries, cache statistics, and ring buffer telemetry at `GET /metrics`
 - **Distributed Tracing**: W3C Trace Context specification compliance (`traceparent`, `tracestate`, `X-Trace-Id`, `X-Span-Id`) with automatic 128-bit trace ID generation and header propagation via `TracingMiddleware`
 - **Sharded In-Memory Cache Engine**: 64-way Lock-Free Partitioned Cache (`ShardedCacheService`) with FNV-1a hash distribution (`(hash ^ (hash >> 16)) & 63`), sub-microsecond TTL eviction, and hit-ratio telemetry
@@ -87,7 +88,7 @@ cargo run --release
 
 ## Running Tests
 
-Run the full 22-test integration test suite:
+Run the full 24-test integration test suite:
 ```bash
 cargo test --verbose
 ```
@@ -127,14 +128,34 @@ cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e ping
 
 ## API Endpoints Reference
 
-### 1. Prometheus / OpenMetrics & Distributed Tracing
-- `GET /metrics` or `GET /api/v1/metrics/prometheus`
-  - Returns standard Prometheus 0.0.4 text exposition format (`text/plain; version=0.0.4; charset=utf-8`) ready for scraping by Prometheus, Grafana Agent, or Datadog.
-  - Metrics exported: `http_requests_total`, `http_requests_in_flight`, `http_request_duration_seconds`, `ring_buffer_occupancy`, `cache_hit_ratio_percent`, `cache_keys_total`.
-- `GET /api/v1/trace/current`
-  - Returns active W3C trace context, span hierarchy, and propagation headers for the current request.
+### 1. Real-Time WebSocket Telemetry & Live Dashboard
+- `GET /dashboard` or `GET /api/v1/stream/dashboard`
+  - Self-contained real-time visual web monitoring dashboard that connects to `/ws/metrics` and renders live RPS meters, P50/P99 latency cards, ring buffer occupancy, and cache hit ratios.
+- `GET /ws/metrics` or `GET /api/v1/stream/metrics`
+  - Upgrades HTTP connection to WebSocket and streams continuous 100ms JSON telemetry frames:
+    ```json
+    {
+      "timestamp": "2026-08-28T19:00:00.000Z",
+      "uptime_seconds": 180,
+      "total_requests": 64200,
+      "active_requests": 8,
+      "current_rps": 71450.2,
+      "p50_us": 6,
+      "p90_us": 10,
+      "p99_us": 21,
+      "ring_buffer_occupancy": 3200,
+      "ring_buffer_total_pushed": 128000,
+      "cache_total_keys": 100,
+      "cache_hit_ratio_pct": 99.1
+    }
+    ```
+  - Supports interactive client commands: `{"command": "ping"}`, `{"command": "get_snapshot"}`, `{"command": "reset_metrics"}`, `{"command": "drain_buffer"}`.
 
-### 2. 64-Way Sharded In-Memory Cache Engine
+### 2. Prometheus / OpenMetrics & Distributed Tracing
+- `GET /metrics` or `GET /api/v1/metrics/prometheus`: Standard Prometheus 0.0.4 text exposition format.
+- `GET /api/v1/trace/current`: Returns active W3C trace context, span hierarchy, and propagation headers.
+
+### 3. 64-Way Sharded In-Memory Cache Engine
 - `GET /api/v1/cache/{key}`: Sub-10μs key retrieval with hit count and remaining TTL milliseconds.
 - `PUT /api/v1/cache/{key}`: Sets or updates a cache key with optional `ttl_seconds`.
 - `DELETE /api/v1/cache/{key}`: Removes a key from its assigned shard.
@@ -143,14 +164,14 @@ cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e ping
 - `POST /api/v1/cache/clear`: Clears all 64 cache partitions.
 - `POST /api/v1/cache/purge-expired`: On-demand expiration sweeper.
 
-### 3. Zero-Copy Event Ingestion & In-Memory Ring Buffer
+### 4. Zero-Copy Event Ingestion & In-Memory Ring Buffer
 - `POST /api/v1/events/ingest/zerocopy`: Ingests single telemetry event borrowing strings directly from request byte slice.
 - `POST /api/v1/events/ingest/batch`: Batch ingestion of multiple event records in a single payload.
 - `GET /api/v1/events/buffer/stats`: Returns ring buffer capacity (65,536), live occupancy, write/read head positions, total pushed, and dropped count.
 - `GET /api/v1/events/buffer/recent?limit=20&topic=sensor.temperature`: Non-destructive query returning the most recent events.
 - `POST /api/v1/events/buffer/drain`: Atomically drains all buffered events.
 
-### 4. Heartbeat, Metrics & Serialization
+### 5. Heartbeat, Metrics & Serialization
 - `GET /api/v1/ping`: Zero-allocation heartbeat response in sub-10μs.
 - `GET /api/v1/health`: System health reporting CPU architecture, worker thread counts, and uptime.
 - `GET /api/v1/metrics`: Lock-free atomic counters (RPS, status codes, latency percentiles P50..P99.9).
@@ -160,8 +181,11 @@ cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e ping
 
 ## Architecture Notes
 
+### WebSocket Telemetry Broadcaster
+`WebSocketBroadcaster` utilizes Tokio broadcast channels with a non-blocking 100ms background ticker. The ticker computes instantaneous request throughput deltas (`current_rps = delta_requests / delta_secs`) and fans out JSON telemetry frames to all connected dashboard sessions without degrading the HTTP request pipeline.
+
 ### Prometheus / OpenMetrics 0.0.4 Text Exposition
-`render_prometheus_metrics` compiles live system state into standard Prometheus text format without external runtime overhead. Scrapers can observe request rate counters, in-flight gauges, sub-millisecond quantile summaries (`0.5`, `0.9`, `0.95`, `0.99`, `0.999`), ring buffer occupancy, and cache hit ratios directly on `/metrics`.
+`render_prometheus_metrics` compiles live system state into standard Prometheus text format without external runtime overhead. Scrapers observe request counters, in-flight gauges, sub-millisecond quantile summaries (`0.5`, `0.9`, `0.95`, `0.99`, `0.999`), ring buffer occupancy, and cache hit ratios directly on `/metrics`.
 
 ### W3C Distributed Tracing Pipeline
 `TracingMiddleware` enforces the W3C Trace Context recommendation. If incoming requests include `traceparent` (e.g. `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`), the global `trace_id` is preserved and a new `span_id` is assigned for this server hop. If missing, a high-entropy 128-bit trace ID is generated automatically. Response headers include `traceparent`, `X-Trace-Id`, `X-Span-Id`, and pass-through `tracestate`.
