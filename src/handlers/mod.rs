@@ -10,6 +10,8 @@ pub mod events;
 pub mod health;
 pub mod metrics;
 pub mod ping;
+pub mod prometheus;
+pub mod trace;
 
 use actix_web::web;
 
@@ -26,16 +28,18 @@ use crate::handlers::events::{
 use crate::handlers::health::get_health;
 use crate::handlers::metrics::{get_metrics, reset_metrics};
 use crate::handlers::ping::get_ping;
+use crate::handlers::prometheus::get_prometheus_metrics;
+use crate::handlers::trace::get_current_trace;
 
 /// Registers all application endpoints and versioned API scopes onto the Actix service configuration.
 ///
 /// # Arguments
 /// * `cfg` - Actix web service configuration reference
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    // Root level health & ping shortcuts
+    // Root level health, ping, and Prometheus shortcuts
     cfg.route("/health", web::get().to(get_health));
     cfg.route("/ping", web::get().to(get_ping));
-    cfg.route("/metrics", web::get().to(get_metrics));
+    cfg.route("/metrics", web::get().to(get_prometheus_metrics));
 
     // Versioned API v1 scope
     cfg.service(
@@ -43,7 +47,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/health", web::get().to(get_health))
             .route("/ping", web::get().to(get_ping))
             .route("/metrics", web::get().to(get_metrics))
+            .route("/metrics/prometheus", web::get().to(get_prometheus_metrics))
             .route("/metrics/reset", web::post().to(reset_metrics))
+            .route("/trace/current", web::get().to(get_current_trace))
             .route("/echo", web::post().to(post_echo))
             .route("/benchmark/synthetic", web::get().to(get_synthetic_data))
             .route("/benchmark/ingest", web::post().to(post_ingest_data))

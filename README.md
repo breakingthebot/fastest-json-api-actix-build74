@@ -1,17 +1,18 @@
 # Fastest Possible JSON API (Build 74)
 
-An ultra-low-latency, zero-cost abstraction, high-throughput asynchronous JSON REST API built with Actix-Web 4.x in Rust. Designed for sub-10 microsecond internal server response times, lock-free atomic telemetry aggregation, zero-copy string borrowing, cache-line aligned circular ring buffers, 64-way partitioned in-memory caching with sub-microsecond TTL evaluation, and sustained 70,000+ requests per second throughput with sub-millisecond round-trip latencies.
+An ultra-low-latency, zero-cost abstraction, high-throughput asynchronous JSON REST API built with Actix-Web 4.x in Rust. Designed for sub-10 microsecond internal server response times, lock-free atomic telemetry aggregation, zero-copy string borrowing, cache-line aligned circular ring buffers, 64-way partitioned in-memory caching with sub-microsecond TTL evaluation, Prometheus / OpenMetrics 0.0.4 exposition, W3C distributed tracing header propagation, and sustained 70,000+ requests per second throughput with sub-millisecond round-trip latencies.
 
 ## Stack
 
 - **Language / Runtime**: Rust (2021 Edition, `rustc 1.96+`)
 - **Framework**: Actix-Web 4.9 (Asynchronous Actor-based HTTP Engine)
 - **Async Runtime**: Tokio 1.38 & Actix-RT 2.10
+- **Observability & OpenMetrics**: Standard Prometheus text exposition (version 0.0.4) exporting request counters, in-flight gauges, quantile summaries, cache statistics, and ring buffer telemetry at `GET /metrics`
+- **Distributed Tracing**: W3C Trace Context specification compliance (`traceparent`, `tracestate`, `X-Trace-Id`, `X-Span-Id`) with automatic 128-bit trace ID generation and header propagation via `TracingMiddleware`
 - **Sharded In-Memory Cache Engine**: 64-way Lock-Free Partitioned Cache (`ShardedCacheService`) with FNV-1a hash distribution (`(hash ^ (hash >> 16)) & 63`), sub-microsecond TTL eviction, and hit-ratio telemetry
 - **Zero-Copy Serialization Engine**: Serde with `ZeroCopyEvent<'a>` string slice borrowing directly from raw HTTP byte buffers
 - **In-Memory Ring Buffer**: 64-byte Cache-Line Aligned (`#[repr(align(64))]`) Lock-Free Circular Ring Buffer (`RingBufferService`) with bitmask wraparound (`index & (65536 - 1)`)
-- **Observability & Telemetry**: Lock-free Atomic Counters (`AtomicU64`, `AtomicUsize`) & Reservoir Latency Distribution Percentiles (P50, P90, P95, P99, P99.9)
-- **Middleware**: Custom `LatencyTracker` injecting high-resolution `X-Response-Time-Microseconds`, `X-Response-Time-Ms`, and `X-Server-Timing` headers via monotonic clock (`std::time::Instant`)
+- **Middleware Pipeline**: Custom `TracingMiddleware` and `LatencyTracker` injecting high-resolution `X-Response-Time-Microseconds`, `X-Response-Time-Ms`, `X-Server-Timing`, `traceparent`, and `X-Trace-Id` headers
 - **Load Testing & Benchmarking**: Dedicated multi-threaded asynchronous client harness (`benchmark-client`)
 - **Compiler Optimizations**: Profile `release` configured with `opt-level = 3`, Link-Time Optimization (`lto = true`), single codegen unit (`codegen-units = 1`), `panic = "abort"`, and binary symbol stripping (`strip = true`)
 - **CI/CD**: GitHub Actions (`cargo fmt`, `cargo check`, `cargo test`, `cargo clippy`, release binary compilation)
@@ -86,7 +87,7 @@ cargo run --release
 
 ## Running Tests
 
-Run the full integration test suite:
+Run the full 22-test integration test suite:
 ```bash
 cargo test --verbose
 ```
@@ -126,36 +127,30 @@ cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e ping
 
 ## API Endpoints Reference
 
-### 1. 64-Way Sharded In-Memory Cache Engine
-- `GET /api/v1/cache/{key}`
-  - Retrieves cached item; returns stored value, shard index, hit count, and remaining TTL milliseconds.
-- `PUT /api/v1/cache/{key}`
-  - Sets or updates a cache key with optional `ttl_seconds` in request payload:
-    ```json
-    {
-      "value": { "user_id": 42, "role": "admin", "permissions": ["read", "write"] },
-      "ttl_seconds": 300
-    }
-    ```
-- `DELETE /api/v1/cache/{key}`
-  - Removes a key from its assigned shard.
-- `POST /api/v1/cache/batch/set`
-  - High-throughput batch setting of multiple key-value pairs across shards.
-- `GET /api/v1/cache/stats`
-  - Returns telemetry including overall hit ratio percentage, total gets/sets/deletes, memory estimate, and per-shard key counts.
-- `POST /api/v1/cache/clear`
-  - Clears all 64 cache shards.
-- `POST /api/v1/cache/purge-expired`
-  - On-demand expiration sweeper evicting all expired keys.
+### 1. Prometheus / OpenMetrics & Distributed Tracing
+- `GET /metrics` or `GET /api/v1/metrics/prometheus`
+  - Returns standard Prometheus 0.0.4 text exposition format (`text/plain; version=0.0.4; charset=utf-8`) ready for scraping by Prometheus, Grafana Agent, or Datadog.
+  - Metrics exported: `http_requests_total`, `http_requests_in_flight`, `http_request_duration_seconds`, `ring_buffer_occupancy`, `cache_hit_ratio_percent`, `cache_keys_total`.
+- `GET /api/v1/trace/current`
+  - Returns active W3C trace context, span hierarchy, and propagation headers for the current request.
 
-### 2. Zero-Copy Event Ingestion & In-Memory Ring Buffer
+### 2. 64-Way Sharded In-Memory Cache Engine
+- `GET /api/v1/cache/{key}`: Sub-10μs key retrieval with hit count and remaining TTL milliseconds.
+- `PUT /api/v1/cache/{key}`: Sets or updates a cache key with optional `ttl_seconds`.
+- `DELETE /api/v1/cache/{key}`: Removes a key from its assigned shard.
+- `POST /api/v1/cache/batch/set`: Batch key-value insertion across shards.
+- `GET /api/v1/cache/stats`: Telemetry showing overall hit ratio, memory usage, and per-shard distribution.
+- `POST /api/v1/cache/clear`: Clears all 64 cache partitions.
+- `POST /api/v1/cache/purge-expired`: On-demand expiration sweeper.
+
+### 3. Zero-Copy Event Ingestion & In-Memory Ring Buffer
 - `POST /api/v1/events/ingest/zerocopy`: Ingests single telemetry event borrowing strings directly from request byte slice.
 - `POST /api/v1/events/ingest/batch`: Batch ingestion of multiple event records in a single payload.
 - `GET /api/v1/events/buffer/stats`: Returns ring buffer capacity (65,536), live occupancy, write/read head positions, total pushed, and dropped count.
 - `GET /api/v1/events/buffer/recent?limit=20&topic=sensor.temperature`: Non-destructive query returning the most recent events.
 - `POST /api/v1/events/buffer/drain`: Atomically drains all buffered events.
 
-### 3. Heartbeat, Metrics & Serialization
+### 4. Heartbeat, Metrics & Serialization
 - `GET /api/v1/ping`: Zero-allocation heartbeat response in sub-10μs.
 - `GET /api/v1/health`: System health reporting CPU architecture, worker thread counts, and uptime.
 - `GET /api/v1/metrics`: Lock-free atomic counters (RPS, status codes, latency percentiles P50..P99.9).
@@ -165,17 +160,17 @@ cargo run --release --bin benchmark-client -- -n 10000 -c 50 -e ping
 
 ## Architecture Notes
 
+### Prometheus / OpenMetrics 0.0.4 Text Exposition
+`render_prometheus_metrics` compiles live system state into standard Prometheus text format without external runtime overhead. Scrapers can observe request rate counters, in-flight gauges, sub-millisecond quantile summaries (`0.5`, `0.9`, `0.95`, `0.99`, `0.999`), ring buffer occupancy, and cache hit ratios directly on `/metrics`.
+
+### W3C Distributed Tracing Pipeline
+`TracingMiddleware` enforces the W3C Trace Context recommendation. If incoming requests include `traceparent` (e.g. `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`), the global `trace_id` is preserved and a new `span_id` is assigned for this server hop. If missing, a high-entropy 128-bit trace ID is generated automatically. Response headers include `traceparent`, `X-Trace-Id`, `X-Span-Id`, and pass-through `tracestate`.
+
 ### 64-Way Sharded Cache Architecture
 To eliminate global lock contention across dozens of worker threads, `ShardedCacheService` partitions cache storage across 64 independent shards. Keys are mapped to shards using a fast FNV-1a hash function (`(hash ^ (hash >> 16)) & 63`). Each shard is guarded by its own `RwLock`, allowing 64 concurrent write operations and hundreds of concurrent read operations to execute simultaneously with zero lock waiting.
 
-### Sub-Microsecond TTL & Lazy Eviction
-Cache entries track `expires_at_ms`. On `GET` lookups, if the current epoch timestamp exceeds expiration, the item is immediately evicted and reported as a cache miss. An on-demand background sweeper (`POST /api/v1/cache/purge-expired`) can also retain active keys and evict expired records across all 64 shards.
-
 ### Zero-Copy Deserialization with Byte Borrowing
 In `ZeroCopyEvent<'a>`, all string fields (`&'a str`) borrow memory directly from the incoming `web::Bytes` slice. This eliminates heap allocations for strings during JSON parsing, allowing the CPU to read field slices in place and saving hundreds of thousands of heap allocations per second under heavy load.
-
-### Cache-Line Padded Lock-Free Circular Ring Buffer
-To store incoming events without database latency, `RingBufferService` manages a pre-allocated circular buffer of 65,536 slots. The read and write heads are annotated with `#[repr(align(64))]` to occupy separate 64-byte CPU cache lines, eliminating "false sharing" cache-invalidation penalties between reader and writer cores on multi-socket / multi-core systems.
 
 ---
 

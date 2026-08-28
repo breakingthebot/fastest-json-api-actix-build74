@@ -17,7 +17,7 @@ pub mod models;
 pub mod services;
 
 use crate::config::AppConfig;
-use crate::middleware::LatencyTracker;
+use crate::middleware::{LatencyTracker, TracingMiddleware};
 use crate::models::ApiErrorResponse;
 use crate::services::{MetricsService, RingBufferService, ShardedCacheService};
 
@@ -41,6 +41,8 @@ async fn main() -> std::io::Result<()> {
     log::info!("   Keep-Alive     : {}s", config.keep_alive_secs);
     log::info!("   Max JSON Size  : {} bytes", max_payload_bytes);
     log::info!("   Cache Shards   : 64 Partitioned Lock-Free Shards");
+    log::info!("   Tracing        : W3C Trace Context Propagation Enabled");
+    log::info!("   Observability  : OpenMetrics / Prometheus 0.0.4 at /metrics");
     log::info!("   Environment    : {}", config.environment);
     log::info!("==================================================================");
 
@@ -85,6 +87,7 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(cors)
+            .wrap(TracingMiddleware)
             .wrap(LatencyTracker)
             .app_data(json_config)
             .app_data(server_start_time.clone())
