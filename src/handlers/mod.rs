@@ -4,6 +4,7 @@
 //! Created: 2026-08-27
 
 pub mod benchmark;
+pub mod cache;
 pub mod echo;
 pub mod events;
 pub mod health;
@@ -13,6 +14,10 @@ pub mod ping;
 use actix_web::web;
 
 use crate::handlers::benchmark::{get_synthetic_data, post_ingest_data};
+use crate::handlers::cache::{
+    delete_cache_key, get_cache_key, get_cache_stats, post_batch_set_cache,
+    post_clear_cache, post_purge_expired, put_cache_key,
+};
 use crate::handlers::echo::post_echo;
 use crate::handlers::events::{
     get_buffer_stats, get_recent_events, post_drain_buffer, post_ingest_batch,
@@ -47,6 +52,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/events/ingest/batch", web::post().to(post_ingest_batch))
             .route("/events/buffer/stats", web::get().to(get_buffer_stats))
             .route("/events/buffer/recent", web::get().to(get_recent_events))
-            .route("/events/buffer/drain", web::post().to(post_drain_buffer)),
+            .route("/events/buffer/drain", web::post().to(post_drain_buffer))
+            // 64-Way Sharded Cache Endpoints
+            .route("/cache/stats", web::get().to(get_cache_stats))
+            .route("/cache/clear", web::post().to(post_clear_cache))
+            .route("/cache/purge-expired", web::post().to(post_purge_expired))
+            .route("/cache/batch/set", web::post().to(post_batch_set_cache))
+            .route("/cache/{key}", web::get().to(get_cache_key))
+            .route("/cache/{key}", web::put().to(put_cache_key))
+            .route("/cache/{key}", web::delete().to(delete_cache_key)),
     );
 }

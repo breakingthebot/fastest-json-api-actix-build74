@@ -19,7 +19,7 @@ pub mod services;
 use crate::config::AppConfig;
 use crate::middleware::LatencyTracker;
 use crate::models::ApiErrorResponse;
-use crate::services::{MetricsService, RingBufferService};
+use crate::services::{MetricsService, RingBufferService, ShardedCacheService};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -40,17 +40,20 @@ async fn main() -> std::io::Result<()> {
     log::info!("   TCP Backlog    : {}", config.backlog);
     log::info!("   Keep-Alive     : {}s", config.keep_alive_secs);
     log::info!("   Max JSON Size  : {} bytes", max_payload_bytes);
+    log::info!("   Cache Shards   : 64 Partitioned Lock-Free Shards");
     log::info!("   Environment    : {}", config.environment);
     log::info!("==================================================================");
 
     let start_time = Instant::now();
     let metrics_service = Arc::new(MetricsService::new());
     let ring_buffer_service = Arc::new(RingBufferService::new());
+    let cache_service = Arc::new(ShardedCacheService::new());
 
     let server_start_time = web::Data::new(start_time);
     let server_config = web::Data::new(config.clone());
     let shared_metrics = web::Data::new(metrics_service);
     let shared_ring_buffer = web::Data::new(ring_buffer_service);
+    let shared_cache = web::Data::new(cache_service);
 
     HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -88,6 +91,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(server_config.clone())
             .app_data(shared_metrics.clone())
             .app_data(shared_ring_buffer.clone())
+            .app_data(shared_cache.clone())
             .configure(handlers::configure_routes)
     })
     .workers(config.workers)

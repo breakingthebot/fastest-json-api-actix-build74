@@ -72,6 +72,8 @@ async fn main() {
                         "echo" => config.target_url = "http://127.0.0.1:8080/api/v1/echo".to_string(),
                         "zerocopy" => config.target_url = "http://127.0.0.1:8080/api/v1/events/ingest/zerocopy".to_string(),
                         "batch" => config.target_url = "http://127.0.0.1:8080/api/v1/events/ingest/batch".to_string(),
+                        "cache_get" => config.target_url = "http://127.0.0.1:8080/api/v1/cache/bench-key-".to_string(),
+                        "cache_set" => config.target_url = "http://127.0.0.1:8080/api/v1/cache/bench-key-".to_string(),
                         _ => {}
                     }
                     i += 1;
@@ -85,7 +87,7 @@ async fn main() {
                 println!("  -u, --url <URL>            Target URL (default: http://127.0.0.1:8080/api/v1/ping)");
                 println!("  -n, --requests <COUNT>     Total number of requests to send (default: 5000)");
                 println!("  -c, --concurrency <COUNT>  Concurrent worker tasks (default: 50)");
-                println!("  -e, --endpoint <TYPE>      Preset: 'ping', 'health', 'metrics', 'synthetic', 'echo', 'zerocopy', 'batch'");
+                println!("  -e, --endpoint <TYPE>      Preset: 'ping', 'health', 'metrics', 'synthetic', 'echo', 'zerocopy', 'batch', 'cache_get', 'cache_set'");
                 println!("  -h, --help                 Display this help message");
                 return;
             }
@@ -110,6 +112,23 @@ async fn main() {
         .expect("Failed to build HTTP client");
 
     let client_arc = Arc::new(client);
+
+    // Warm up cache keys if benchmark is cache_get
+    if config.endpoint_type == "cache_get" {
+        println!("Pre-populating 100 cache keys across 64 shards...");
+        for k in 0..100 {
+            let _ = client_arc
+                .put(format!("http://127.0.0.1:8080/api/v1/cache/bench-key-{}", k))
+                .json(&serde_json::json!({
+                    "value": {"user_id": k, "session": "active", "score": 99.5},
+                    "ttl_seconds": 3600
+                }))
+                .send()
+                .await;
+        }
+        println!("Warm-up complete.");
+    }
+
     let (tx, mut rx) = mpsc::channel::<RequestResult>(config.total_requests + 100);
 
     let requests_per_worker = config.total_requests / config.concurrency;
@@ -171,6 +190,23 @@ async fn main() {
                             }))
                             .send()
                             .await
+                    }
+                    "cache_set" => {
+                        let key_idx = (worker_id * 1000 + i) % 1000;
+                        let target = format!("{}{}", url, key_idx);
+                        client
+                            .put(&target)
+                            .json(&serde_json::json!({
+                                "value": {"item_id": key_idx, "cached": true, "timestamp": 1724784000},
+                                "ttl_seconds": 600
+                            }))
+                            .send()
+                            .await
+                    }
+                    "cache_get" => {
+                        let key_idx = i % 100;
+                        let target = format!("{}{}", url, key_idx);
+                        client.get(&target).send().await
                     }
                     _ => client.get(&url).send().await,
                 };

@@ -4,6 +4,7 @@
 //! Created: 2026-08-27
 
 pub mod benchmark;
+pub mod cache;
 pub mod echo;
 pub mod error_response;
 pub mod event;
@@ -12,6 +13,10 @@ pub mod metrics;
 pub mod ping;
 
 pub use benchmark::{BenchmarkItem, BenchmarkResponse, IngestRequest, IngestResponse, ItemTelemetry};
+pub use cache::{
+    BatchCacheItem, BatchSetCacheRequest, BatchSetCacheResponse, CacheItemResponse,
+    CacheStatsResponse, SetCacheRequest, ShardStats,
+};
 pub use echo::{EchoRequest, EchoResponse};
 pub use error_response::ApiErrorResponse;
 pub use event::{
