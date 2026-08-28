@@ -1,6 +1,6 @@
 //! tests/zerocopy_ingest_tests.rs
 //! Integration tests for zero-copy and batch event ingestion HTTP endpoints.
-//! Connects to: src/handlers/events.rs, src/services/ring_buffer.rs
+//! Connects to: src/handlers/events.rs, src/services/ring_buffer.rs, src/services/wal_service.rs
 //! Created: 2026-08-28
 
 use actix_web::{test, web, App};
@@ -9,20 +9,27 @@ use fastest_json_api_actix::middleware::LatencyTracker;
 use fastest_json_api_actix::models::{
     BatchIngestResponse, BufferStatsResponse, EventIngestResponse, RecentEventsResponse,
 };
-use fastest_json_api_actix::services::{MetricsService, RingBufferService};
+use fastest_json_api_actix::services::{MetricsService, RingBufferService, WalService};
 use serde_json::json;
+use std::fs::remove_file;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[actix_web::test]
 async fn test_zerocopy_event_ingest_and_query() {
+    let wal_path = PathBuf::from("target/test_data/zc_test.wal");
+    let _ = remove_file(&wal_path);
+
     let metrics_service = Arc::new(MetricsService::new());
     let ring_buffer_service = Arc::new(RingBufferService::new());
+    let wal_service = Arc::new(WalService::new(&wal_path).unwrap());
 
     let app = test::init_service(
         App::new()
             .wrap(LatencyTracker)
             .app_data(web::Data::new(metrics_service))
             .app_data(web::Data::new(ring_buffer_service))
+            .app_data(web::Data::new(wal_service))
             .configure(configure_routes),
     )
     .await;
@@ -71,18 +78,25 @@ async fn test_zerocopy_event_ingest_and_query() {
     let recent: RecentEventsResponse = test::read_body_json(recent_resp).await;
     assert_eq!(recent.count, 1);
     assert_eq!(recent.events[0].event_id, "evt-fast-001");
+
+    let _ = remove_file(&wal_path);
 }
 
 #[actix_web::test]
 async fn test_batch_event_ingest_and_drain() {
+    let wal_path = PathBuf::from("target/test_data/batch_test.wal");
+    let _ = remove_file(&wal_path);
+
     let metrics_service = Arc::new(MetricsService::new());
     let ring_buffer_service = Arc::new(RingBufferService::new());
+    let wal_service = Arc::new(WalService::new(&wal_path).unwrap());
 
     let app = test::init_service(
         App::new()
             .wrap(LatencyTracker)
             .app_data(web::Data::new(metrics_service))
             .app_data(web::Data::new(ring_buffer_service))
+            .app_data(web::Data::new(wal_service))
             .configure(configure_routes),
     )
     .await;
@@ -137,4 +151,6 @@ async fn test_batch_event_ingest_and_drain() {
     let stats_resp = test::call_service(&app, stats_req).await;
     let stats: BufferStatsResponse = test::read_body_json(stats_resp).await;
     assert_eq!(stats.current_occupancy, 0);
+
+    let _ = remove_file(&wal_path);
 }

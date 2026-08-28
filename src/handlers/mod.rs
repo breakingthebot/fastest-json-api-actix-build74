@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod ping;
 pub mod prometheus;
 pub mod trace;
+pub mod wal;
 pub mod websocket;
 
 use actix_web::web;
@@ -31,6 +32,7 @@ use crate::handlers::metrics::{get_metrics, reset_metrics};
 use crate::handlers::ping::get_ping;
 use crate::handlers::prometheus::get_prometheus_metrics;
 use crate::handlers::trace::get_current_trace;
+use crate::handlers::wal::{get_wal_stats, post_wal_checkpoint, post_wal_sync};
 use crate::handlers::websocket::{get_live_dashboard, ws_metrics_stream};
 
 /// Registers all application endpoints and versioned API scopes onto the Actix service configuration.
@@ -65,6 +67,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/events/buffer/stats", web::get().to(get_buffer_stats))
             .route("/events/buffer/recent", web::get().to(get_recent_events))
             .route("/events/buffer/drain", web::post().to(post_drain_buffer))
+            // Write-Ahead Log (WAL) Endpoints
+            .route("/wal/stats", web::get().to(get_wal_stats))
+            .route("/wal/sync", web::post().to(post_wal_sync))
+            .route("/wal/checkpoint", web::post().to(post_wal_checkpoint))
             // 64-Way Sharded Cache Endpoints
             .route("/cache/stats", web::get().to(get_cache_stats))
             .route("/cache/clear", web::post().to(post_clear_cache))

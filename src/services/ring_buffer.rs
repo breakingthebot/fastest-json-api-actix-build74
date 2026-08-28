@@ -66,6 +66,14 @@ impl RingBufferService {
         }
     }
 
+    /// Pushes an owned `IngestEvent` directly into the ring buffer (e.g. on crash recovery).
+    ///
+    /// # Arguments
+    /// * `event` - Owned event record
+    pub fn push(&self, event: IngestEvent) {
+        self.push_event_internal(event);
+    }
+
     /// Pushes a single zero-copy borrowed event into the ring buffer.
     ///
     /// # Arguments

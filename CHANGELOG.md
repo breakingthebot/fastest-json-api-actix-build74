@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-28
+
+### Added
+- **Append-Only Binary Write-Ahead Log (WAL) Engine**:
+  - `WalService` persisting event payloads with a 12-byte framed binary header layout: `[MAGIC(4)][LEN(4)][CRC32(4)][PAYLOAD]`.
+  - SIMD-accelerated hardware CRC32 frame checksum calculation and verification via `crc32fast`.
+  - Automatic startup crash recovery replaying uncorrupted WAL log records into `RingBufferService` on server boot.
+  - Granular `POST /api/v1/wal/sync` for synchronous physical `fsync` flushes and `POST /api/v1/wal/checkpoint` for log rotation and truncation.
+  - `GET /api/v1/wal/stats` returning file size on disk, total binary bytes written, appends, and skipped corrupted frames.
+- **Integration Tests**:
+  - `tests/wal_tests.rs` verifying binary frame serialization, CRC32 checksums, crash recovery replay, checkpoint truncation, and WAL HTTP endpoint flows.
+
 ## [0.5.0] - 2026-08-28
 
 ### Added

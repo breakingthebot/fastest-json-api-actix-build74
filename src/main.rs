@@ -7,6 +7,7 @@ use actix_cors::Cors;
 use actix_web::error::JsonPayloadError;
 use actix_web::http::StatusCode;
 use actix_web::{web, App, HttpResponse, HttpServer};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,7 @@ use crate::config::AppConfig;
 use crate::middleware::{LatencyTracker, TracingMiddleware};
 use crate::models::ApiErrorResponse;
 use crate::services::{
-    MetricsService, RingBufferService, ShardedCacheService, WebSocketBroadcaster,
+    MetricsService, RingBufferService, ShardedCacheService, WalService, WebSocketBroadcaster,
 };
 
 #[actix_web::main]
@@ -35,6 +36,25 @@ async fn main() -> std::io::Result<()> {
     let bind_addr = config.bind_address();
     let max_payload_bytes = config.max_payload_bytes;
 
+    let wal_path = PathBuf::from("data/wal/events.wal");
+    let wal_service = Arc::new(WalService::new(&wal_path)?);
+
+    let ring_buffer_service = Arc::new(RingBufferService::new());
+
+    // Recover persisted events from WAL on boot and replay into in-memory ring buffer
+    match wal_service.recover() {
+        Ok(recovered_events) => {
+            let count = recovered_events.len();
+            for event in recovered_events {
+                ring_buffer_service.push(event);
+            }
+            log::info!("🔄 WAL Recovery: Replayed {} persisted events into ring buffer", count);
+        }
+        Err(e) => {
+            log::warn!("⚠️  WAL Recovery Warning: Could not recover events: {}", e);
+        }
+    }
+
     log::info!("==================================================================");
     log::info!("🚀 Starting Actix Ultra-Fast JSON API (Build 74)");
     log::info!("   Target Address : http://{}", bind_addr);
@@ -43,6 +63,7 @@ async fn main() -> std::io::Result<()> {
     log::info!("   Keep-Alive     : {}s", config.keep_alive_secs);
     log::info!("   Max JSON Size  : {} bytes", max_payload_bytes);
     log::info!("   Cache Shards   : 64 Partitioned Lock-Free Shards");
+    log::info!("   Persistence    : Append-Only Binary WAL at {}", wal_path.display());
     log::info!("   WebSocket      : Real-Time Telemetry Stream at /ws/metrics");
     log::info!("   Live Dashboard : Visual Monitoring UI at /dashboard");
     log::info!("   Tracing        : W3C Trace Context Propagation Enabled");
@@ -52,7 +73,6 @@ async fn main() -> std::io::Result<()> {
 
     let start_time = Instant::now();
     let metrics_service = Arc::new(MetricsService::new());
-    let ring_buffer_service = Arc::new(RingBufferService::new());
     let cache_service = Arc::new(ShardedCacheService::new());
     let websocket_broadcaster = WebSocketBroadcaster::new(
         Arc::clone(&metrics_service),
@@ -65,6 +85,7 @@ async fn main() -> std::io::Result<()> {
     let shared_metrics = web::Data::new(metrics_service);
     let shared_ring_buffer = web::Data::new(ring_buffer_service);
     let shared_cache = web::Data::new(cache_service);
+    let shared_wal = web::Data::new(wal_service);
     let shared_broadcaster = web::Data::new(websocket_broadcaster);
 
     HttpServer::new(move || {
@@ -105,6 +126,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(shared_metrics.clone())
             .app_data(shared_ring_buffer.clone())
             .app_data(shared_cache.clone())
+            .app_data(shared_wal.clone())
             .app_data(shared_broadcaster.clone())
             .configure(handlers::configure_routes)
     })
