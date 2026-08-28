@@ -1,0 +1,29 @@
+# Environment variables
+.env
+*.env
+!.env.example
+
+# Build notes and private agent instructions
+AGENTS.md
+BUILD_NOTES.md
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Python artifacts
+venv/
+__pycache__/
+*.pyc
+
+# Node artifacts
+node_modules/
+dist/
+build/
+
+# Operating System & IDE artifacts
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp

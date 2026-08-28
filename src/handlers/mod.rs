@@ -1,0 +1,41 @@
+//! src/handlers/mod.rs
+//! Router configuration and handler registration.
+//! Connects to: src/handlers/*.rs, src/main.rs
+//! Created: 2026-08-27
+
+pub mod benchmark;
+pub mod echo;
+pub mod health;
+pub mod metrics;
+pub mod ping;
+
+use actix_web::web;
+
+use crate::handlers::benchmark::{get_synthetic_data, post_ingest_data};
+use crate::handlers::echo::post_echo;
+use crate::handlers::health::get_health;
+use crate::handlers::metrics::{get_metrics, reset_metrics};
+use crate::handlers::ping::get_ping;
+
+/// Registers all application endpoints and versioned API scopes onto the Actix service configuration.
+///
+/// # Arguments
+/// * `cfg` - Actix web service configuration reference
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    // Root level health & ping shortcuts
+    cfg.route("/health", web::get().to(get_health));
+    cfg.route("/ping", web::get().to(get_ping));
+    cfg.route("/metrics", web::get().to(get_metrics));
+
+    // Versioned API v1 scope
+    cfg.service(
+        web::scope("/api/v1")
+            .route("/health", web::get().to(get_health))
+            .route("/ping", web::get().to(get_ping))
+            .route("/metrics", web::get().to(get_metrics))
+            .route("/metrics/reset", web::post().to(reset_metrics))
+            .route("/echo", web::post().to(post_echo))
+            .route("/benchmark/synthetic", web::get().to(get_synthetic_data))
+            .route("/benchmark/ingest", web::post().to(post_ingest_data)),
+    );
+}
