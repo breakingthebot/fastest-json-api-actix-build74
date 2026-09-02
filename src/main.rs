@@ -18,10 +18,11 @@ pub mod models;
 pub mod services;
 
 use crate::config::AppConfig;
-use crate::middleware::{LatencyTracker, TracingMiddleware};
+use crate::middleware::{LatencyTracker, RateLimitMiddleware, TracingMiddleware};
 use crate::models::ApiErrorResponse;
 use crate::services::{
-    MetricsService, RingBufferService, ShardedCacheService, WalService, WebSocketBroadcaster,
+    MetricsService, RateLimiterService, RingBufferService, ShardedCacheService, WalService,
+    WebSocketBroadcaster,
 };
 
 #[actix_web::main]
@@ -62,6 +63,7 @@ async fn main() -> std::io::Result<()> {
     log::info!("   TCP Backlog    : {}", config.backlog);
     log::info!("   Keep-Alive     : {}s", config.keep_alive_secs);
     log::info!("   Max JSON Size  : {} bytes", max_payload_bytes);
+    log::info!("   Rate Limiter   : Token Bucket (1,000 Burst, 500 req/sec refill)");
     log::info!("   Cache Shards   : 64 Partitioned Lock-Free Shards");
     log::info!("   Persistence    : Append-Only Binary WAL at {}", wal_path.display());
     log::info!("   WebSocket      : Real-Time Telemetry Stream at /ws/metrics");
@@ -74,6 +76,7 @@ async fn main() -> std::io::Result<()> {
     let start_time = Instant::now();
     let metrics_service = Arc::new(MetricsService::new());
     let cache_service = Arc::new(ShardedCacheService::new());
+    let rate_limiter_service = Arc::new(RateLimiterService::new(1000, 500.0));
     let websocket_broadcaster = WebSocketBroadcaster::new(
         Arc::clone(&metrics_service),
         Arc::clone(&ring_buffer_service),
@@ -86,6 +89,7 @@ async fn main() -> std::io::Result<()> {
     let shared_ring_buffer = web::Data::new(ring_buffer_service);
     let shared_cache = web::Data::new(cache_service);
     let shared_wal = web::Data::new(wal_service);
+    let shared_rate_limiter = web::Data::new(rate_limiter_service);
     let shared_broadcaster = web::Data::new(websocket_broadcaster);
 
     HttpServer::new(move || {
@@ -119,6 +123,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .wrap(TracingMiddleware)
+            .wrap(RateLimitMiddleware)
             .wrap(LatencyTracker)
             .app_data(json_config)
             .app_data(server_start_time.clone())
@@ -127,6 +132,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(shared_ring_buffer.clone())
             .app_data(shared_cache.clone())
             .app_data(shared_wal.clone())
+            .app_data(shared_rate_limiter.clone())
             .app_data(shared_broadcaster.clone())
             .configure(handlers::configure_routes)
     })

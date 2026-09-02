@@ -11,6 +11,7 @@ pub mod event;
 pub mod health;
 pub mod metrics;
 pub mod ping;
+pub mod rate_limit;
 pub mod tracing;
 pub mod wal;
 pub mod websocket;
@@ -29,6 +30,7 @@ pub use event::{
 pub use health::{HealthResponse, SystemMetadata};
 pub use metrics::{EndpointMetrics, LatencyDistribution, MetricsSnapshot};
 pub use ping::PingResponse;
+pub use rate_limit::{RateLimitDecision, RateLimitErrorResponse, RateLimitStatsResponse};
 pub use tracing::{TraceContext, TraceInspectionResponse};
 pub use wal::{WalCheckpointResponse, WalStatsResponse, WalSyncResponse};
 pub use websocket::{LiveTelemetryFrame, WsClientCommand, WsCommandResponse};
